@@ -9,7 +9,7 @@ Hong Kong Polytechnic University <br>
 
 <br>
 <div align=center>
-    <img src="pipeline.png" align="middle">
+    <img src="docs/pipeline.png" align="middle">
 </div>
 <br>
 
