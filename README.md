@@ -78,8 +78,8 @@ cd visualwebarena/
 Clone the repository and install with pip:
 
 ```bash
-git clone git@github.com:ChenWu98/agent-attack.git
-cd agent-attack/
+git clone git@github.com:PolyLiYJ/AgentTypo.git
+cd AgentTypo/
 python -m pip install -e .
 ```
 
