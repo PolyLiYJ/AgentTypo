@@ -42,8 +42,8 @@ Multimodal agents built on large vision–language models (LVLMs) are increasing
     - [Episode-wise evaluation](#episode-wise-evaluation)
     - [Stepwise evaluation](#stepwise-evaluation)
     - [Lifelong Attack](#lifelong-attack)
-    - [Attack Testing Tools](#attack-testing-tools)
-    - [GPT-5 Testing](#gpt-5-testing)
+    - [Computer Use Agent Testing](#computer-use-agent-testing)
+    - [Multi-Model Testing](#multi-model-testing)
   - [Known Issues](#known-issues)
   - [Citation](#citation)
 
@@ -78,8 +78,8 @@ cd visualwebarena/
 Clone the repository and install with pip:
 
 ```bash
-git clone git@github.com:PolyLiYJ/AgentTypo.git
-cd AgentTypo/
+git clone git@github.com:ChenWu98/agent-attack.git
+cd agent-attack/
 python -m pip install -e .
 ```
 
@@ -125,16 +125,40 @@ Copy the raw data files to the experiment data directory:
 ```bash
 scp -r data/ exp_data/
 ```
-
 The adversarial examples will later be saved to the `exp_data/` directory.
 
-## Usage
 
-## Lifelong Attack
+### Set VisualWebareana Environment
+```bash
+cd ../visualwebarena/classifieds_docker_compose/
+sudo docker-compose restart
+sudo docker start forum
+sudo docker start shopping
+```
+
+
+## Run Attacks
+
+### AgentTypo Base Attack
+
+```bash
+# Run typography attack with ATPI algorithm
+python scripts/Bayes_Typography.py
+
+# Run with specific model and instruction file
+python scripts/Bayes_Typography.py --model qwen-max --instruction_path agent/prompts/jsons/qwen_p_som_cot_id_actree_3s.json
+
+# The ATPI algorithm optimizes:
+# - Text placement (position)
+# - Text size (font size)
+# - Text color (stealth optimization)
+# - Stealth loss (minimize human detectability)
+```
+> **Note:** For Qwen models, use the `qwen_p_som_cot_id_actree_3s.json` instruction file which includes enhanced action format constraints to prevent invalid actions like "inspect".
+
+### Lifelong Attack (AgentTypo-Pro)
 
 The LifelongAttack framework implements continuous adversarial attacks on multimodal agents through an iterative optimization loop.
-
-### Overview
 
 LifelongAttack uses a multi-component system:
 
@@ -144,28 +168,25 @@ LifelongAttack uses a multi-component system:
 4. **Embedding Retriever**: Retrieves similar past examples and strategies
 5. **Scorer**: Evaluates attack effectiveness
 
-### AgentTypo-base: Automatic Typographic Prompt Injection (ATPI)
-
-AgentTypo-base uses Bayesian optimization to inject typographic prompts into images:
-
 ```bash
-# Run typography attack with ATPI algorithm
-python scripts/Bayes_Typography.py
+# use gemini model
+python scripts/LifelongAttack.py --model gpt-4o --typo_attack_type fixed
 
-# The ATPI algorithm optimizes:
-# - Text placement (position)
-# - Text size (font size)
-# - Text color (stealth optimization)
-# - Stealth loss (minimize human detectability)
-```
+# use Gemini model
+python scripts/LifelongAttack.py --model gemini-2.5-flash --typo_attack_type fixed
 
-### AgentTypo-pro: Multi-LLM Prompt Refinement
+# use claude model
+python scripts/LifelongAttack.py --model claude-3-5-sonnet-20241022 --typo_attack_type fixed
 
-AgentTypo-pro enhances attack strength through an iterative refinement process powered by multiple LLMs. It implements a lifelong learning framework that accumulates and reuses attack knowledge.
-
-```bash
-# Run AgentTypo-pro with multi-LLM refinement
-python scripts/LifelongAttack.py --attack agenttypo_pro --model gpt-4o
+# using auto method with bayesian optimization
+python scripts/LifelongAttack.py \
+    --attack typography_attack \
+    --model gpt-4o-mini \
+    --typo_attack_type auto \
+    --caption_model qwen-vl-max \
+    --typo_n_trials 5 \
+    --max_tasks 50 \
+    --max_iters 10
 
 # Features:
 # - Iterative prompt refinement using evaluation feedback
@@ -218,49 +239,6 @@ python analyze_successful_attacks.py --test_models gpt-5,gpt-4o,gpt-4o-mini
 python analyze_successful_attacks.py --list_models
 ```
 
-## Attack Testing Tools
-
-### Test OpenAI Connection
-
-Test connection to OpenAI API with GPT-5 models:
-
-```bash
-# Test default GPT-5
-python test_openai_connection.py
-
-# Test specific model
-python test_openai_connection.py --model gpt-5-mini
-
-# Test all GPT-5 models
-python test_openai_connection.py --test-all
-```
-
-### Test LLMWrapper
-
-Test the LLM wrapper import and functionality:
-
-```bash
-python test_openai_connection.py --model gpt-5
-```
-
-## GPT-5 Testing
-
-### Test VisualWebArena Agent with GPT-5
-
-Test the visualwebarena agent.py integration with GPT-5 models:
-
-```bash
-# Test visualwebarena agent integration
-python analyze_successful_attacks.py --test_agent
-
-# Test LLM config for all GPT-5 models
-python analyze_successful_attacks.py --test_llm_config
-
-# Or use standalone test script
-python test_visualwebarena_agent.py
-python test_visualwebarena_agent.py --test-llm-config
-```
-
 ### GPT-5 Model Support
 
 The following GPT-5 models are supported:
@@ -277,14 +255,110 @@ The following GPT-5 models are supported:
 Before running GPT-5 tests, ensure the environment is configured:
 
 ```bash
-# Set up VPN proxy (if needed)
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-
 # Set OpenAI API key
 export OPENAI_API_KEY="your-api-key"
 # Or use openaikey.txt file
 ```
+
+## Computer Use Agent Testing
+
+Computer Use agents are multimodal models that can perform tasks by outputting coordinates (bounding boxes) on images, without relying on auxiliary text like accessibility trees.
+
+### Image-Only Attack Testing
+
+Test attacks on Computer-Use models using only image inputs:
+
+```bash
+# Test typography attacks on multiple models
+python test_imageonly_attacks.py --test_models "gpt-4o,claude-sonnet-4-6" --attack typography
+
+# Test CLIP-based attacks
+python test_imageonly_attacks.py --test_models "gemini-2.5-flash" --attack clipattack
+
+# Test on specific models with custom attack types
+python test_imageonly_attacks.py --test_models "gpt-4o" --attack typography --typo_attack_type auto
+```
+
+### Supported Models for Image-Only Testing
+
+| Provider | Models |
+|----------|--------|
+| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-5, gpt-5-chat-latest |
+| Google | gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash, gemini-2.5-flash |
+| Anthropic | claude-3-opus, claude-3-sonnet, claude-3-haiku, claude-sonnet-4-6, claude-opus-4-6 |
+| Qwen | qwen-max, qwen-plus |
+
+### Claude Computer Use Evaluation
+
+Evaluate Claude Computer Use agents with coordinate-based output:
+
+```bash
+# Evaluate Claude Sonnet 4.5
+python eval_claude_computer_use.py --model claude-sonnet-4-5-20250929
+
+# Evaluate Claude Opus 4.6
+python eval_claude_computer_use.py --model claude-opus-4-6
+
+# Evaluate Claude Haiku 4.5
+python eval_claude_computer_use.py --model claude-haiku-4-5-20251001
+```
+
+### GPT Computer Use Evaluation
+
+Evaluate GPT models with coordinate-based output:
+
+```bash
+# Evaluate GPT-5 models
+python eval_gpt_computer_use.py --models "gpt-5,gpt-5.1"
+
+# Evaluate GPT-4o
+python eval_gpt_computer_use.py --models "gpt-4o,gpt-4o-mini"
+```
+
+### How Computer Use Evaluation Works
+
+1. **Screenshot Capture**: Takes screenshots of webpage states
+2. **Coordinate Prediction**: Model outputs bounding box coordinates for actions
+3. **SoM Compatibility**: Converts coordinates to Set-of-Mark (SoM) format
+4. **Action Execution**: Executes clicks, types, and other actions
+5. **Task Success**: Evaluates if the task was completed successfully
+
+---
+
+## Multi-Model Testing
+
+Test attacks on GPT-5, GPT-4o, and Gemini models:
+
+```bash
+# Test on GPT-5.1 (use --mode chat for GPT models)
+python analyze_successful_attacks.py --test_models gpt-5.1 --mode chat
+
+# Test on gpt-5-chat-latest (use --mode chat for GPT models)
+python analyze_successful_attacks.py --test_models gpt-5-chat-latest --mode chat
+
+# Test on Gemini-2.5-Flash (use --mode completion for Gemini)
+python analyze_successful_attacks.py --test_models gemini-2.5-flash --mode completion
+
+# Test on multiple models at once
+python analyze_successful_attacks.py --test_models gpt-5.1,gpt-5-chat-latest,gemini-2.5-flash
+```
+
+### Model-Specific Configuration
+
+| Model | Provider | Mode | Instruction Path |
+|-------|----------|------|------------------|
+| gpt-5.1 | openai | chat | agent/prompts/jsons/p_gpt5_multimodal_cot_id_actree_3s.json |
+| gpt-5-chat-latest | openai | chat | agent/prompts/jsons/p_gpt5_multimodal_cot_id_actree_3s.json |
+| gemini-3-flash-preview | google | completion | agent/prompts/jsons/qwen_p_som_cot_id_actree_3s.json |
+| gemini-3.1-flash-lite-preview | google | completion | agent/prompts/jsons/qwen_p_som_cot_id_actree_3s.json |
+
+
+### Important Notes
+
+- **GPT models** (`gpt-5.1`, `gpt-5-chat-latest`): Use `--mode chat`
+- **Gemini models** (`gemini-2.5-flash`): Use `--mode completion`
+- The provider is automatically detected based on the model name
+- GPT-5 models automatically use temperature=1.0 as required by the API
 
 
 ## Known Issues
