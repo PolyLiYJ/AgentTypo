@@ -182,7 +182,180 @@ class OpenAIWrapper(LLMWrapper):
                 ]
             return self.llm.invoke(messages).content
         
+import os
+import torch
+from openai import OpenAI
+from accelerate import Accelerator
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, BitsAndBytesConfig, AutoModelForCausalLM
+from qwen_vl_utils import process_vision_info
 
+class QwenWrapper:
+    def __init__(self, model="qwen-2.5", temperature=0.7):
+        """
+        初始化 Qwen 包装器。
+        如果是本地模型名（如 qwen-2.5），使用本地加载逻辑。
+        如果是 API 模型名（如 qwen-3, qwen-plus），使用 OpenAI SDK 模式。
+        """
+        self.model_id = model
+        self.temperature = temperature
+        
+        # 判断是否使用 API 模式
+        # 逻辑：非 qwen-2.5-vl 且包含 qwen-3 或指定 API 模型名
+        self.use_api = "qwen-3" in model.lower() or model in ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-vl-max"]
+
+        if self.use_api:
+            # --- API 模式初始化 ---
+            from scripts.api_utils import get_qwen_key
+            api_key = get_qwen_key()
+            if not api_key:
+                raise ValueError("API 模式需要设置 QWEN_API_KEY")
+            
+            self.client = OpenAI(
+                api_key=api_key,
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            )
+            print(f"Using API mode for model: {self.model_id}")
+        else:
+            # --- 本地模型加载逻辑 (Qwen 2.5) ---
+            print(f"Loading local model {self.model_id}...")
+            model_path = "Qwen/Qwen2.5-VL-7B-Instruct" if model == "qwen-2.5" else model
+            
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16
+            )
+
+            if "VL" in model_path:
+                self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    model_path,
+                    quantization_config=bnb_config,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True
+                )
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    quantization_config=bnb_config,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True
+                )
+            
+            self.model.gradient_checkpointing_enable()
+            self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+            self.accelerator = Accelerator()
+
+    def _format_data_api(self, prompt, system, image=None):
+        """为 OpenAI SDK 格式化数据"""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        
+        # 处理多模态（API 格式）
+        if image is not None:
+            # 这里假设 API 接受 base64 或 URL，此处以 text + content 结构示例
+            # 注意：Dashscope API 对图片的具体处理可能需要 base64 编码
+            content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}} 
+            ]
+        else:
+            content = prompt
+            
+        messages.append({"role": "user", "content": content})
+        return messages
+
+    def generate(self, prompt, system=None, image=None):
+        """生成响应，自动处理 API 调用或本地推理"""
+        if self.use_api:
+            # --- 执行 API 调用 ---
+            import base64
+            from io import BytesIO
+
+            # 如果传入的是 PIL Image，转换为 base64
+            img_b64 = None
+            if image is not None:
+                buffered = BytesIO()
+                image.save(buffered, format="JPEG")
+                img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            messages = self._format_data_api(prompt, system, img_b64)
+            
+            response = self.client.chat.completions.create(
+                model=self.model_id,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=256
+            )
+            return response.choices[0].message.content
+
+        else:
+            # --- 执行本地模型推理 ---
+            messages = self._format_data(prompt, system, image)
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            
+            if image is not None:
+                image_inputs, video_inputs = process_vision_info(messages)
+                inputs = self.processor(
+                    text=[text],
+                    images=image_inputs,
+                    videos=video_inputs,
+                    padding=True,
+                    return_tensors="pt",
+                ).to("cuda")
+            else:
+                inputs = self.processor(
+                    text=[text],
+                    return_tensors="pt",
+                ).to("cuda")
+
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=True,
+                temperature=self.temperature,
+            )
+
+            response = self.processor.batch_decode(
+                generated_ids,
+                skip_special_tokens=True
+            )[0].split("assistant")[-1].strip()
+            
+            return response
+    def _format_data(self, prompt, system, image: None):
+        """Format the input data for the model."""
+        if image is not None:
+            return [
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": system}]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image", "image": image}
+                        ]
+                    }
+                ]
+        else:
+            return [
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": system}]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                        ]
+                    }
+            ]
+                
+'''
 # ------- Qwen API Wrapper -------
 class QwenWrapper(LLMWrapper):
     def __init__(self, model="qwen-2.5", temperature=0.7):
@@ -305,7 +478,7 @@ class QwenWrapper(LLMWrapper):
                 skip_special_tokens=False
             )[0].split("assistant")[-1].split("<|im_end|>")[0].strip()
         return response
-
+'''
 # ------- DeepSeek API -------
 class DeepseekWrapper(LLMWrapper):
     def __init__(self, model="deepseek-chat", temperature=0.7):
