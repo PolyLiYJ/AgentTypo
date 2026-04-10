@@ -137,6 +137,15 @@ sudo docker start shopping
 ```
 
 
+##  Quick Test on Optimized Prompts
+
+``` bash
+unzip LifeLong-results_20250902192358_gpt-4o-mini_typography_attack_0.zip 
+
+python analyze_successful_attacks.py --lifelong_dir LifeLong-results_20250902192358_gpt-4o-mini_typography_attack_0 \
+--test_models "gpt-4o,gemini-3.1-flash-lite-preview,claude-opus-4-5-20251101"
+```
+
 ## Run Attacks
 
 ### AgentTypo Base Attack
@@ -183,9 +192,9 @@ python scripts/LifelongAttack.py \
     --attack typography_attack \
     --model gpt-4o-mini \
     --typo_attack_type auto \
-    --caption_model qwen-vl-max \
+    --caption_model qwen-vl-max-2025-04-08 \
     --typo_n_trials 5 \
-    --max_tasks 50 \
+    --max_tasks 20 \
     --max_iters 10
 
 # Features:
